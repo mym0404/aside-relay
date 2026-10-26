@@ -134,7 +134,7 @@ function parseEntries(value: unknown) {
   return value.items.flatMap((item): NativeEntry[] => isRecord(item) && typeof item.name === 'string' && typeof item.path === 'string' && typeof item.absolutePath === 'string' && (item.kind === 'file' || item.kind === 'folder') ? [{ name: item.name, path: item.path, absolutePath: item.absolutePath, kind: item.kind, bytes: typeof item.bytes === 'number' ? item.bytes : undefined, mime: typeof item.mime === 'string' ? item.mime : undefined }] : []);
 }
 
-function parseSkills(value: unknown) {
+export function parseSkills(value: unknown) {
   const items = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.items) ? value.items : [];
   return items.flatMap((item): ContextSkill[] => isRecord(item) && item.enabled !== false && typeof item.name === 'string' && typeof item.path === 'string' ? [{ name: item.name, path: item.path, description: typeof item.description === 'string' ? item.description : undefined }] : []);
 }

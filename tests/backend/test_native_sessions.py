@@ -382,12 +382,40 @@ class NativeSessionContractTests(support.IsolatedBackendTest):
         self.assertEqual(rejected.status_code, 409)
         self.assertEqual(len(calls), 1)
 
+    async def test_clear_messages_and_compact_commands(self):
+        calls = self.stub({"sessions.get": self.session, "sessions.clearMessages": {"ok": True}})
+        async with support.api_client() as client:
+            response = await client.post(
+                f"/api/native/sessions/{SESSION_ID}/command", json={"command": "clear-messages"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls[1], (
+            "sessions.clearMessages",
+            {"accountId": ACCOUNT_ID, "sessionId": SESSION_ID},
+            True,
+        ))
+
+        calls = self.stub({"sessions.get": self.session, "sessions.compact": {"ok": True}})
+        async with support.api_client() as client:
+            response = await client.post(
+                f"/api/native/sessions/{SESSION_ID}/command",
+                json={"command": "compact", "instructions": " Keep decisions "},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls[1], (
+            "sessions.compact",
+            {"accountId": ACCOUNT_ID, "sessionId": SESSION_ID, "instructions": "Keep decisions"},
+            True,
+        ))
+
     async def test_command_validation_rejects_unsupported_and_malformed_payloads(self):
         cases = [
             ({"command": "unknown"}, 400),
             ({"command": "sidechat", "prompt": "", "quote": "text"}, 400),
             ({"command": "branch", "messageId": "missing"}, 400),
             ({"command": "resolve-suspension", "response": {"verdict": "allow"}}, 409),
+            ({"command": "clear-messages", "extra": True}, 400),
+            ({"command": "compact", "instructions": ""}, 400),
         ]
         for payload, expected in cases:
             with self.subTest(payload=payload):

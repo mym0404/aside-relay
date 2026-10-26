@@ -59,6 +59,8 @@ export function App() {
   const [isStartingSidechat, setStartingSidechat] = useState(false);
   const [browserTarget, setBrowserTarget] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<Pick<ChatSession, 'id' | 'title'>>();
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const [isClearing, setClearing] = useState(false);
   const [zoom, setZoom] = useState<string>();
   const [draft, setDraft] = useState(''); const [revision, setRevision] = useState(0);
   const [isKeyboardOpen, setKeyboardOpen] = useState(false);
@@ -103,6 +105,19 @@ export function App() {
     return () => media.removeEventListener('change', update);
   }, [themeMode, appearance]);
   function newChat() { chat.newChat(); setRunOptions(undefined); setDraft(''); setRevision(value => value + 1); setDrawer(false); setMenuSession(undefined); changeAtBottom(true); }
+  async function clearChatMessages() {
+    if (!chat.sessionId || isClearing) return;
+    setClearing(true);
+    try {
+      await chat.request(`/api/native/sessions/${encodeURIComponent(chat.sessionId)}/command`, {
+        method: 'POST', body: JSON.stringify({ command: 'clear-messages' }),
+      });
+      setClearConfirm(false);
+      await chat.refreshMessages();
+      notify('Chat cleared.', 'success');
+    } catch { notify('Could not clear this chat.', 'error'); }
+    finally { setClearing(false); }
+  }
   function newIncognitoChat() { newChat(); setRunOptions({ mode: 'incognito' }); }
   function openSession(id: string) { void chat.openSession(id); setRunOptions(undefined); setDraft(''); setRevision(value => value + 1); setDrawer(false); setMenuSession(undefined); changeAtBottom(true); }
   function openPanel(next: Panel, targetId?: string) { const sessionId = targetId ?? chat.sessionId; const path = next === 'browser' ? '/tabs' : next === 'files' && sessionId ? '/files?session=' + encodeURIComponent(sessionId) : '/' + next; setBrowserTarget(next === 'browser' ? targetId : undefined); if (next === 'files') setFilesSessionId(sessionId); setPanel(next); setDrawer(false); if (panel) history.replaceState({ panel: next }, '', path); else history.pushState({ panel: next }, '', path); }
@@ -309,13 +324,14 @@ export function App() {
         {chat.sessionId && chat.isReady && !chat.isOpening && !chat.authError && <BrowserLive key={chat.sessionId} sessionId={chat.sessionId} request={chat.request} isBrowserOpen={panel === 'browser'} isVisible={!panel && !isDrawer && !menuSession && !deleteTarget && !zoom} onOpen={targetId => openPanel('browser', targetId)} />}
       </div>
       {chat.isReady && !chat.isOpening && !chat.authError && <SessionWorkspace chat={chat} notify={notify} onOpenSession={openSession} onOutputs={() => openPanel('files')} onStateChange={setWorkspaceState} />}
-      <Composer runOptions={runOptions} chat={chat} onBrowser={() => openPanel('browser')} draft={draft} setDraft={setDraft} revision={revision} notify={notify} textSize={textSize} uiFont={appearance.uiFont} isKeyboardOpen={isKeyboardOpen} />
+      <Composer runOptions={runOptions} chat={chat} onBrowser={() => openPanel('browser')} draft={draft} setDraft={setDraft} revision={revision} notify={notify} textSize={textSize} uiFont={appearance.uiFont} isKeyboardOpen={isKeyboardOpen} onNewChat={newChat} onConfirmClear={() => setClearConfirm(true)} />
     </main>
     <AnimatePresence>{isDrawer && <Drawer key="drawer" onClose={() => { setMenuSession(undefined); setDrawer(false); }}><Sidebar chat={chat} isDrawer onClose={() => { setMenuSession(undefined); setDrawer(false); }} onNew={newChat} onNewIncognito={newIncognitoChat} onOpen={openSession} onSettings={() => openPanel('settings')} onBrowser={() => openPanel('browser')} onMenu={setMenuSession} /></Drawer>}</AnimatePresence>
     <AnimatePresence mode="wait">{panel === 'settings' ? <Dialog key="settings" title="Settings" onClose={closePanel}><Settings chat={chat} notifications={notifications} notify={notify} isDarkMode={theme === 'dark'} onThemeToggle={() => changeThemeMode(theme === 'light' ? 'dark' : 'light')} themeMode={themeMode} onThemeModeChange={changeThemeMode} appearance={appearance} onAppearanceChange={changeAppearance} textSize={textSize} onTextSizeChange={changeTextSize} onWorkspace={() => openPanel('workspace')} /></Dialog> : panel === 'browser' ? <Sheet key={`browser:${chat.sessionId ?? "new"}:${browserTarget ?? "all"}`} title="Browser" isWide onClose={closePanel}><BrowserPanel initialTargetId={browserTarget} sessionId={chat.sessionId} request={chat.request} notify={notify} onClose={closePanel} onStart={prompt => { closePanel(); if (!chat.sessionId) newChat(); setDraft(prompt); }} /></Sheet> : panel === 'workspace' ? <Suspense key="workspace" fallback={<Dialog title="Workspace & preferences" onClose={closePanel}><DialogDescription>Loading workspace…</DialogDescription></Dialog>}><Workspace chat={chat} notify={notify} onClose={closePanel} onOpenSession={id => { closePanel(); openSession(id); }} onNewProjectChat={projectId => { closePanel(); newChat(); setRunOptions({ projectId }); }} /></Suspense> : panel === 'files' && effectiveFilesSessionId ? <Suspense key={effectiveFilesSessionId} fallback={<Dialog title="Files & outputs" onClose={closePanel}><DialogDescription>Loading files…</DialogDescription></Dialog>}><Artifacts sessionId={effectiveFilesSessionId} request={chat.request} notify={notify} onZoom={setZoom} onClose={closePanel} /></Suspense> : undefined}</AnimatePresence>
     {menuSession && !chat.authError && <SessionMenu key={menuSession.id} target={menuSession} chat={chat} onClose={() => setMenuSession(undefined)} notify={notify} onRename={setRenameTarget} onDelete={setDeleteTarget} onFiles={id => openPanel('files', id)} />}
     <AnimatePresence>{sidechat && <Dialog key="sidechat" title="Ask in side chat" onClose={() => { if (!isStartingSidechat) setSidechat(undefined); }}><blockquote {...stylex.props(styles.sidechatQuote)}>{sidechat.text}</blockquote><label {...stylex.props(styles.sidechatLabel)}>Message<textarea autoFocus rows={3} value={sidechatPrompt} disabled={isStartingSidechat} onChange={event => setSidechatPrompt(event.currentTarget.value)} {...stylex.props(ui.field)} /></label><DialogActions><Button disabled={isStartingSidechat} onClick={() => setSidechat(undefined)}>Cancel</Button><Button variant="primary" disabled={isStartingSidechat || !sidechatPrompt.trim()} onClick={() => { void startSidechat(); }}>{isStartingSidechat ? 'Starting…' : 'Send'}</Button></DialogActions></Dialog>}</AnimatePresence>
     <AnimatePresence>{renameTarget && <RenameConversation key={renameTarget.id} session={renameTarget} chat={chat} onClose={() => setRenameTarget(undefined)} />}</AnimatePresence>
+    <AnimatePresence>{clearConfirm && <Dialog key="clear-chat" title="Clear chat?" initialFocus={() => document.querySelector<HTMLElement>('[data-app-dialog] button[data-cancel]')} onClose={() => { if (!isClearing) setClearConfirm(false); }}><DialogDescription>This will permanently delete all messages in this chat.</DialogDescription><DialogActions><Button data-cancel="" disabled={isClearing} onClick={() => setClearConfirm(false)}>Cancel</Button><Button variant="danger" disabled={isClearing} onClick={() => { void clearChatMessages(); }}>{isClearing ? 'Clearing…' : 'Clear'}</Button></DialogActions></Dialog>}</AnimatePresence>
     <AnimatePresence>{deleteTarget && <Dialog key={deleteTarget.id} title={DELETE_CONVERSATION_TITLE} initialFocus={() => document.querySelector<HTMLElement>('[data-app-dialog] button[data-cancel]')} onClose={() => setDeleteTarget(undefined)}><p {...stylex.props(styles.deleteTitle)}>{deleteTarget.title}</p><DialogDescription>This also deletes the original conversation and its files in Aside. This cannot be undone.</DialogDescription><DialogActions><Button data-cancel="" onClick={() => setDeleteTarget(undefined)}>Cancel</Button><Button variant="danger" onClick={() => { setDeleteTarget(undefined); setDrawer(false); void chat.deleteSession(deleteTarget.id); }}>Delete</Button></DialogActions></Dialog>}</AnimatePresence>
     <AnimatePresence>{zoom && <ImagePreview key={zoom} src={zoom} onClose={() => setZoom(undefined)} />}</AnimatePresence>
     <ToastStack toasts={toasts} onDismiss={dismissToast} />

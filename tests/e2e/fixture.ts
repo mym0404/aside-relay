@@ -64,6 +64,7 @@ export class MockAside {
   workspace: Record<string, unknown> = { status: 'idle', summary: 'Two files changed.', agents: [], todos: [], outputs: [] };
   preferences: Record<string, unknown> = { followUpBehavior: 'queue', sidebarRecentChatLimit: 3, defaultProjectId: null };
   tabs = [{ targetId: BROWSER_TAB_ID, title: BROWSER_TAB_TITLE, url: BROWSER_TAB_URL, active: true, loaded: true, lastAccessed: Date.now() }];
+  skills: Array<{ name: string; path: string; description?: string; enabled?: boolean }> = [];
   private socket?: WebSocketRoute;
   private pendingRun?: { payload: Record<string, unknown>; gate: Gate };
   private delayedNativePage?: { cursor: string; gate: Gate };
@@ -221,7 +222,7 @@ export class MockAside {
     if (/\/artifact-preview$/.test(url.pathname)) return json(route, { content: 'E2E file content' });
     if (/\/artifacts\/result.txt$/.test(url.pathname)) return route.fulfill({ status: 200, contentType: 'text/plain', body: 'E2E file content' });
     if (method === 'GET' && url.pathname === '/api/native/files/roots') return json(route, { items: [] });
-    if (method === 'GET' && url.pathname === '/api/native/workspace/skills') return json(route, { items: [] });
+    if (method === 'GET' && url.pathname === '/api/native/workspace/skills') return json(route, { items: this.skills });
 
     const signature = `${method} ${url.pathname}${url.search}`;
     this.unexpected.push(signature);

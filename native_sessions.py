@@ -237,6 +237,10 @@ async def command_native_session(session_id: str, payload: dict):
         result = await _set_incognito(session, payload)
     elif command == "sidechat":
         result = await _create_sidechat(session, payload)
+    elif command == "clear-messages":
+        result = await _clear_messages(session_id, payload)
+    elif command == "compact":
+        result = await _compact_session(session_id, payload)
     else:
         raise HTTPException(400, "Unsupported conversation command.")
     return {"result": result}
@@ -412,3 +416,26 @@ async def _create_sidechat(session: dict, payload: dict):
         "trigger": {"type": "sidechat"},
         "message": message,
     }, mutation=True)
+
+
+async def _clear_messages(session_id: str, payload: dict):
+    if set(payload) != {"command"}:
+        raise HTTPException(400, "Invalid clear command.")
+    return await _call("sessions.clearMessages", {
+        "accountId": ACCOUNT_ID,
+        "sessionId": session_id,
+    }, mutation=True)
+
+
+async def _compact_session(session_id: str, payload: dict):
+    allowed = {"command", "instructions"}
+    if not set(payload).issubset(allowed) or "command" not in payload:
+        raise HTTPException(400, "Invalid compact command.")
+    instructions = payload.get("instructions")
+    if instructions is not None and (
+            not isinstance(instructions, str) or not instructions.strip() or len(instructions) > 10_000):
+        raise HTTPException(400, "Use compact instructions between 1 and 10,000 characters.")
+    request = {"accountId": ACCOUNT_ID, "sessionId": session_id}
+    if isinstance(instructions, str):
+        request["instructions"] = instructions.strip()
+    return await _call("sessions.compact", request, mutation=True)
