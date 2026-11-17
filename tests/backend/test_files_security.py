@@ -1,4 +1,5 @@
 import json
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +10,11 @@ from fastapi.testclient import TestClient
 import config
 import native_files
 import sessions
+
+needs_symlinks = unittest.skipUnless(
+    support.SYMLINKS_SUPPORTED,
+    "symlink fixtures unavailable (Windows without Developer Mode/admin)",
+)
 
 
 class FilesSecurityTest(support.IsolatedBackendTest):
@@ -35,6 +41,7 @@ class FilesSecurityTest(support.IsolatedBackendTest):
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
+    @needs_symlinks
     async def test_browse_only_exposes_visible_scoped_entries(self):
         (self.uploads_root / "notes.txt").write_text("hello")
         (self.uploads_root / ".env").write_text("secret")
@@ -99,6 +106,7 @@ class FilesSecurityTest(support.IsolatedBackendTest):
         self.assertEqual(deleted.status_code, 200)
         self.assertFalse((artifacts / "renamed.csv").exists())
 
+    @needs_symlinks
     async def test_artifact_traversal_and_symlink_roots_are_rejected(self):
         outside = self.root / "outside"
         outside.mkdir()
@@ -113,6 +121,7 @@ class FilesSecurityTest(support.IsolatedBackendTest):
         )
         self.assertIn(traversal.status_code, (400, 404))
 
+    @needs_symlinks
     async def test_nested_symlink_and_hidden_parent_never_enter_artifact_listing(self):
         artifacts = self.session_dir / "artifacts"
         artifacts.mkdir()
@@ -133,6 +142,7 @@ class FilesSecurityTest(support.IsolatedBackendTest):
         )
         self.assertEqual(alias.status_code, 404)
 
+    @needs_symlinks
     async def test_session_and_media_file_helpers_reject_symlinks(self):
         safe_file = self.session_dir / "safe.txt"
         safe_file.write_text("safe")
@@ -148,6 +158,7 @@ class FilesSecurityTest(support.IsolatedBackendTest):
         self.assertEqual(sessions.media_path("safe.png"), (self.media_root / "safe.png").resolve())
         self.assertIsNone(sessions.media_path("escape.png"))
 
+    @needs_symlinks
     async def test_session_listing_does_not_read_symlinked_logs(self):
         good_log = self.session_dir / "messages.jsonl"
         good_log.write_text(json.dumps({"timestamp": 1, "type": "user", "content": "safe"}) + "\n")

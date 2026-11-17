@@ -78,10 +78,12 @@ class CompletionRegressionTests(support.IsolatedBackendTest):
                     return False
 
                 stop = AsyncMock(side_effect=fail_stop)
+                # create=True: Windows 에는 os.getpgid/killpg 가 없다.
+                # 이 테스트는 stop 이 실패해서 kill 경로 자체를 안 탄다.
                 with patch.dict(runner._runs, {SESSION_ID: run}, clear=True), \
                         patch("runner.stop_session", new=stop), \
-                        patch("runner.os.getpgid") as getpgid, \
-                        patch("runner.os.killpg") as killpg:
+                        patch("runner.os.getpgid", create=True) as getpgid, \
+                        patch("runner.os.killpg", create=True) as killpg:
                     result = await runner.abort(SESSION_ID)
 
                     self.assertFalse(result)

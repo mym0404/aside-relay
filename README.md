@@ -1,8 +1,9 @@
 # aside-relay
 
 Use [Aside](https://aside.dev) from your phone or browser. This self-hosted web app
-connects to the Aside app and CLI on your Mac, with live conversations, browser
-previews, interactive HTML visuals, and completion notifications.
+connects to the Aside app and CLI on your computer — macOS or Windows — with live
+conversations, browser previews, interactive HTML visuals, and completion
+notifications.
 
 **Cloudflare and Cloudflare Access are optional.** You can use localhost,
 Tailscale, your own VPN, or an HTTPS address on your own domain. The bridge has
@@ -303,6 +304,39 @@ before assigning a hostname or port already used by another application.
 
 ## Install and test on the Mac
 
+> **Windows:** the same steps apply with these substitutions — the walkthrough
+> below is written for macOS. Install Python 3.11+ and Node from
+> [python.org](https://www.python.org/downloads/) and [nodejs.org](https://nodejs.org)
+> (check "Add to PATH"), then in PowerShell:
+>
+> ```powershell
+> git clone https://github.com/mym0404/aside-relay.git
+> cd aside-relay
+> py -3.13 -m venv .venv
+> .\.venv\Scripts\python -m pip install -r requirements.txt
+> npm ci
+> npm run build
+> .\.venv\Scripts\python scripts\setup.py --yes
+> .\.venv\Scripts\python server.py
+> ```
+>
+> Differences from the macOS steps:
+>
+> - The Aside CLI comes with the app installer and lands on `PATH`
+>   (`%LOCALAPPDATA%\Aside\CLI\current\aside.exe`); `aside --version` should work
+>   in a new terminal. `ASIDE_BIN` defaults to it, so you usually do not set it.
+> - No Homebrew, no `open -a Aside`, no `python3` — use `py`/`python` and start
+>   the app from the Start menu or `Start-Process "$env:LOCALAPPDATA\Aside\Application\Aside.exe"`.
+> - `scripts/setup.py --install-service` registers a Task Scheduler logon task
+>   named `aside-relay` (instead of a launchd plist) and runs the bridge through
+>   `pythonw` with logs in `<repo>\logs\`. Remove it with
+>   `scripts\setup.py --uninstall-service`.
+> - Six backend tests that need to create symlinks are skipped automatically
+>   unless Windows Developer Mode (or an administrator shell) is enabled; enable
+>   *Settings → System → For developers → Developer Mode* to run them.
+> - Everything else (Tailscale Serve, Caddy/Nginx, Cloudflare Tunnel, the phone
+>   PWA) is identical: the bridge still listens on `127.0.0.1:8799`.
+
 ### 1. Prerequisites
 
 - macOS, with the [Aside app](https://aside.dev) installed and signed in.
@@ -387,6 +421,8 @@ The interactive wizard is also available:
 .venv/bin/python scripts/setup.py
 ```
 
+(On Windows: `.\.venv\Scripts\python scripts\setup.py`.)
+
 For Tailscale or your own domain, answer **no** to its Cloudflare question. Its
 ntfy question is separate from built-in Web Push, which needs no ntfy service.
 Answer no to service installation until the foreground test below passes.
@@ -399,7 +435,8 @@ with all defaults; the server generates a missing token itself.
 ```dotenv
 ASIDE_RELAY_HOST=127.0.0.1
 ASIDE_RELAY_PORT=8799
-ASIDE_BIN=~/.local/bin/aside
+# macOS only — Windows finds the CLI on PATH / %LOCALAPPDATA%\Aside\CLI\current automatically
+#ASIDE_BIN=~/.local/bin/aside
 ASIDE_ACCOUNT=u0
 ASIDE_USER_DIR=~/.aside/u/0
 ASIDE_DAEMON_URL=http://127.0.0.1:21420
@@ -543,6 +580,22 @@ are different conditions.
 
 If you move the checkout or replace its virtual environment, rerun the service
 installer with the new `.venv/bin/python` path.
+
+On Windows the same flag registers a Task Scheduler logon task named
+`aside-relay` instead of a LaunchAgent. It launches the bridge through
+`pythonw` so no console window stays open:
+
+```powershell
+.\.venv\Scripts\python scripts\setup.py --install-service
+Get-ScheduledTask -TaskName aside-relay        # inspect
+Stop-ScheduledTask -TaskName aside-relay       # after a config edit:
+Start-ScheduledTask -TaskName aside-relay      # reload it
+Get-Content logs\bridge.err.log -Tail 80
+.\.venv\Scripts\python scripts\setup.py --uninstall-service
+```
+
+No elevation is required; the task runs as your user at logon, and logs land in
+`logs\bridge.out.log` / `logs\bridge.err.log`.
 
 ## Tailscale: private HTTPS
 
@@ -1156,7 +1209,7 @@ service sets `HOME`, and absolute Aside/interpreter paths avoid PATH differences
 | `ASIDE_RELAY_PORT` | `8799` | Bridge port; update the upstream when changing it |
 | `ASIDE_RELAY_TOKEN_FILE` | `~/.aside-relay/token` | Shared token file; generated if absent/empty |
 | `ASIDE_RELAY_TOKEN` | Unset | Explicit token override; takes precedence over the token file |
-| `ASIDE_BIN` | `~/.local/bin/aside` | Aside CLI executable |
+| `ASIDE_BIN` | macOS `~/.local/bin/aside`; Windows `PATH` lookup then `%LOCALAPPDATA%\Aside\CLI\current\aside.exe` | Aside CLI executable |
 | `ASIDE_ACCOUNT` | `u0` | CLI account ID; must match its user directory |
 | `ASIDE_USER_DIR` | `~/.aside/u/<account number>` | Aside account's sessions and uploads; `u0` uses `0` |
 | `ASIDE_DAEMON_URL` | `http://127.0.0.1:21420` | Local Aside daemon |

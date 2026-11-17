@@ -58,7 +58,46 @@ if not BEARER:
     _TOKEN_FILE.chmod(0o600)
 
 # --- Aside paths -------------------------------------------------------
-ASIDE_BIN = str(Path(_env("ASIDE_BIN", str(HOME / ".local/bin/aside"))).expanduser())
+def _default_aside_bin() -> str:
+    """First CLI the platform would actually find, without an env override."""
+    import shutil
+    if os.name == "nt":
+        # Windows installer puts the CLI next to the app, under LocalAppData,
+        # and the installer adds it to PATH. Check PATH first, then the
+        # known install dir, then the Unix-style fallback for git-bash setups.
+        found = shutil.which("aside") or shutil.which("aside.exe")
+        if found:
+            return found
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            installed = Path(local) / "Aside" / "CLI" / "current" / "aside.exe"
+            if installed.exists():
+                return str(installed)
+        return str(HOME / ".local/bin/aside")
+    return str(HOME / ".local/bin/aside")
+
+
+ASIDE_BIN = str(Path(_env("ASIDE_BIN", _default_aside_bin())).expanduser())
+
+
+def _default_aside_app() -> str:
+    """How to launch the Aside *app* (not the CLI) when a browser window is needed.
+
+    macOS: `open -a Aside` resolves the bundle. Windows: the Electron exe.
+    """
+    if os.name == "nt":
+        for base in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"),
+                     r"C:\Program Files", r"C:\Program Files (x86)"):
+            if not base:
+                continue
+            exe = Path(base) / "Aside" / "Application" / "Aside.exe"
+            if exe.exists():
+                return str(exe)
+        return "Aside.exe"   # rely on PATH/App Paths at launch time
+    return "/usr/bin/open"   # caller adds -g -n -a Aside --args on macOS
+
+
+ASIDE_APP = _env("ASIDE_APP", _default_aside_app())
 # CLI account id. Must match the user dir below (u0 -> ~/.aside/u/0) — a different
 # account makes the bridge look in the wrong place for sessions. Every CLI call
 # passes it explicitly; set it empty to leave the choice to the CLI.

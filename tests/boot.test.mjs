@@ -187,8 +187,12 @@ function installFetch(targetWindow) {
   globalThis.fetch = targetWindow.fetch = async (input, init = {}) => {
     const url = new URL(String(input), location.href);
     const method = init.method || 'GET';
-    if (method === 'GET' && url.pathname.startsWith('/assets/')) {
-      const assetPath = path.join(dist, 'assets', path.basename(url.pathname));
+    // The bundle resolves lazy chunks against import.meta.url. Under the test's
+    // file:// entry on Windows that pathname is /C:/assets/x.js — strip the
+    // drive-letter prefix so it matches the same way it does on macOS.
+    const pathname = url.pathname.replace(/^\/[A-Za-z]:/, '');
+    if (method === 'GET' && pathname.startsWith('/assets/')) {
+      const assetPath = path.join(dist, 'assets', path.basename(pathname));
       if (fs.existsSync(assetPath)) return new Response(fs.readFileSync(assetPath));
     }
     if (url.pathname === '/api/web-token') return response({ token: 'test-token', via: 'loopback' });

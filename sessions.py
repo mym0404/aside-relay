@@ -126,26 +126,48 @@ def media_path(media_id: str) -> Path | None:
 # --------------------------------------------------------------------- 정규화
 # 에이전트는 최종 답변에 로컬 절대경로를 그대로 박는다:
 #   ![screenshot](/Users/<you>/.aside/u/0/sessions/<dir>/tmp/xxx.png)
+#   ![screenshot](C:\Users\<you>\.aside\u\0\sessions\<dir>\tmp\xxx.png)   (Windows)
 #   [Output too large ... saved to: /Users/.../tmp/repl-result-xxx.txt]
 # 폰에서는 열 수 없으니 브리지가 서빙하는 URL 로 바꿔준다.
 # 접두사 `file://` 를 반드시 함께 먹어야 한다. 안 그러면 경로만 바뀌어
 #   ![샷](file:///api/sessions/<id>/file/tmp/x.png)
 # 가 되고, https 페이지에서 file: 스킴은 브라우저가 차단해 깨진 이미지로 뜬다.
 # (실제로 이 버그로 답변의 스크린샷이 alt 텍스트만 보였다.)
+# Windows 경로는 드라이브 문자 + 역슬래시 구분자를 쓰므로 어느쪽이든 받아낸다.
+_PATH_SEP = r"[\\/]"
 _LOCAL_PATH_RE = re.compile(
-    r"(?:file://)?"
-    r"/Users/[^/\s]+/\.aside/u/\d+/sessions/(?P<dir>[^/\s)\]]+)/(?P<rel>[^\s)\]\"']+)"
+    r"(?:file://)?"                                  # file:// 접두사(선택)
+    r"/?"                                            # file:///C:/... 의 슬래시(선택)
+    r"(?:[A-Za-z]:)?"                                # Windows 드라이브 문자(선택)
+    + _PATH_SEP +
+    r"Users" + _PATH_SEP +
+    r"[^/\\\s]+" + _PATH_SEP + r"\.aside" + _PATH_SEP + r"u" + _PATH_SEP + r"\d+" + _PATH_SEP +
+    r"sessions" + _PATH_SEP +
+    r"(?P<dir>[^/\\\s)\]]+)" + _PATH_SEP +
+    r"(?P<rel>[^\s)\]\"']+)"
 )
 # 첨부 업로드도 같은 문제를 겪는다. 이쪽은 파일명 하나가 곧 id 다.
 _UPLOAD_PATH_RE = re.compile(
     r"(?:file://)?"
-    r"/Users/[^/\s]+/\.aside/u/\d+/uploads/(?P<fid>[^\s/)\]\"']+)"
+    r"/?"
+    r"(?:[A-Za-z]:)?"
+    + _PATH_SEP +
+    r"Users" + _PATH_SEP +
+    r"[^/\\\s]+" + _PATH_SEP + r"\.aside" + _PATH_SEP + r"u" + _PATH_SEP + r"\d+" + _PATH_SEP +
+    r"uploads" + _PATH_SEP +
+    r"(?P<fid>[^\s/\\)\]\"']+)"
 )
 
 
 def rewrite_local_paths(text: str) -> str:
     text = _LOCAL_PATH_RE.sub(
-        lambda m: f"/api/sessions/{m.group('dir').split('_', 1)[-1]}/file/{m.group('rel')}", text)
+        lambda m: "/api/sessions/{}/file/{}".format(
+            m.group("dir").split("_", 1)[-1],
+            # Windows 경로의 역슬래시를 URL 세그먼트 구분자로 통일한다.
+            m.group("rel").replace("\\", "/"),
+        ),
+        text,
+    )
     return _UPLOAD_PATH_RE.sub(lambda m: f"/api/upload/{m.group('fid')}", text)
 
 
