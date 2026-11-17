@@ -19,21 +19,25 @@ CLI 인터페이스(2026-09-09 실측, `aside --help`):
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import logging
 import os
-import pty
 import re
 import shutil
 import signal
 import struct
 import tempfile
-import termios
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+if os.name == "posix":
+    # PTY 는 macOS 에서만 쓴다. Windows 에선 파이프로도 CLI 출력이 잘 나온다
+    # (실측: Windows aside.exe 는 TTY 없이도 stdout 에 답변을쓴다).
+    import fcntl
+    import pty
+    import termios
 
 import config
 from daemon import ACCOUNT_ID, daemon, repair_browser_binding
@@ -43,7 +47,7 @@ log = logging.getLogger("aside-relay.runner")
 SESSION_NOT_FOUND_MESSAGE = "Conversation not found"
 RUN_ALREADY_RUNNING_MESSAGE = "This conversation is already running"
 RUN_FAILED_MESSAGE = "The response could not start. Please try again."
-BROWSER_DISCONNECTED_MESSAGE = "Connect the Aside browser on your Mac, then try again."
+BROWSER_DISCONNECTED_MESSAGE = "Connect the Aside browser on your computer, then try again."
 _STREAM_POLL_SEC = 0.05
 _BROWSER_START_RETRY_DELAYS = (1, 2)
 
@@ -97,10 +101,12 @@ def _open_pty() -> tuple[int, int]:
 
 
 async def _drain(run: Run) -> None:
-    """PTY master 를 끝까지 읽어 최종 답변을 모은다."""
+    """PTY master(또는 파이프)를 끝까지 읽어 최종 답변을 모은다."""
     loop = asyncio.get_running_loop()
     chunks: list[bytes] = []
     fd = run.master_fd
+    # master_fd == -1 → Windows 파이프 경로. asyncio StreamReader 에서 직접 읽는다.
+    use_pipe = fd < 0
 
     def _read() -> bytes | None:
         try:
@@ -108,17 +114,26 @@ async def _drain(run: Run) -> None:
         except OSError:
             return None
 
-    while True:
-        data = await loop.run_in_executor(None, _read)
-        if not data:
-            break
-        chunks.append(data)
+    if use_pipe:
+        stdout = run.proc.stdout
+        while True:
+            data = await stdout.read(65536) if stdout is not None else b""
+            if not data:
+                break
+            chunks.append(data)
+    else:
+        while True:
+            data = await loop.run_in_executor(None, _read)
+            if not data:
+                break
+            chunks.append(data)
     raw = b"".join(chunks).decode("utf-8", "replace")
     run.output = _strip_ansi(raw).strip()
-    try:
-        os.close(fd)
-    except OSError:
-        pass
+    if not use_pipe:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
     run.exit_code = await run.proc.wait()
     run.finished_at = time.time()
     if run.exit_code:
@@ -265,6 +280,16 @@ def _strip_ansi(s: str) -> str:
 
 
 async def _spawn(args: list[str]) -> tuple[asyncio.subprocess.Process, int]:
+    if os.name != "posix":
+        # Windows 에선 PTY 대신 일반 파이프로도 충분하다.
+        # 실측: Windows aside.exe 는 TTY 없이도 stdout 에 답변을쓴다.
+        proc = await asyncio.create_subprocess_exec(
+            config.ASIDE_BIN, *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        return proc, -1
     master, slave = _open_pty()
     env = dict(os.environ)
     env["TERM"] = "xterm-256color"
@@ -525,6 +550,17 @@ def _can_recover_browser_start(run: Run) -> bool:
              "tabs may be parked in a background window after a profile switch" in detail))
 
 
+def _aside_open_cmd() -> list[str]:
+    """Command prefix that launches a fresh Aside window with `--args` after it.
+
+    macOS: `/usr/bin/open -g -n -a Aside --args`
+    Windows: the Electron exe itself takes the flags directly.
+    """
+    if os.name == "nt":
+        return [config.ASIDE_APP]
+    return ["/usr/bin/open", "-g", "-n", "-a", "Aside", "--args"]
+
+
 async def _reopen_browser_profile() -> bool:
     try:
         registry = json.loads((Path.home() / ".aside/accounts.json").read_text())
@@ -549,11 +585,15 @@ async def _reopen_browser_profile() -> bool:
         if not isinstance(aside, dict) or aside.get("profile_id") != bindings[0]["profileId"]:
             return False
         proc = await asyncio.create_subprocess_exec(
-            "/usr/bin/open", "-g", "-n", "-a", "Aside", "--args",
+            *_aside_open_cmd(),
             f"--user-data-dir={profile_path.parent}",
             f"--profile-directory={profile_path.name}", "chrome://newtab/",
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
         )
+        if os.name == "nt":
+            # macOS 의 `open` 과 달리 Windows 에선 실행한 프로세스가 곧 앱이다.
+            # wait() 하면 브라우저가 꺼질 때까지 막힌다. 띄우기만 하면 성공.
+            return True
         return await proc.wait() == 0
     except (OSError, ValueError, KeyError, TypeError):
         log.warning("could not reopen the account's existing browser profile", exc_info=True)
@@ -686,9 +726,16 @@ async def abort(session_id: str) -> bool:
         run = _runs.get(session_id)
         is_terminated = False
         if stopped and run and run.running:
-            try:
-                os.killpg(os.getpgid(run.proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
+            killed = False
+            if os.name == "posix":
+                try:
+                    os.killpg(os.getpgid(run.proc.pid), signal.SIGTERM)
+                    killed = True
+                except (ProcessLookupError, PermissionError, OSError):
+                    killed = False
+            if not killed:
+                # Windows 에는 프로세스 그룹 kill 이 없고, CLI 는 단일
+                # 프로세스이므로 terminate 로 충분하다.
                 try:
                     run.proc.terminate()
                 except ProcessLookupError:

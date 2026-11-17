@@ -1,4 +1,4 @@
-export const BROWSER_CONNECTION_MESSAGE = 'Connect the Aside browser on your Mac, then try again.';
+export const BROWSER_CONNECTION_MESSAGE = 'Connect the Aside browser on your computer, then try again.';
 export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 const RUNNING_MESSAGE = 'This conversation is already running.';
 const CONNECTION_MESSAGE = 'Check your connection and try again.';

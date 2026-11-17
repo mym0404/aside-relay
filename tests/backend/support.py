@@ -29,6 +29,23 @@ os.environ.update({
 })
 
 
+def _symlinks_work() -> bool:
+    """Windows 는 Developer Mode/관리자 권한 없이 심볼릭 링크를 못 만든다
+    (WinError 1314). 링크 픽스처가 필요한 테스트는 이걸로 건너뛴다."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="symlink-probe-", dir=TEST_ROOT) as tmp:
+            target = Path(tmp) / "target"
+            target.write_text("probe")
+            link = Path(tmp) / "link"
+            link.symlink_to(target)
+            return link.is_symlink()
+    except (OSError, NotImplementedError):
+        return False
+
+
+SYMLINKS_SUPPORTED = _symlinks_work()
+
+
 class IsolatedBackendTest(IsolatedAsyncioTestCase):
     def setUp(self):
         self.storage = tempfile.TemporaryDirectory(prefix="case-", dir=TEST_ROOT)

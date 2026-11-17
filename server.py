@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
 import secrets
 import subprocess
@@ -445,8 +446,86 @@ async def font_file(fid: str):
 
 
 # ------------------------------------------------------------------ 상태
+def _windows_aside_app_running() -> bool:
+    """True when the Aside *app* is running on Windows (not the CLI).
+
+    stdlib ctypes (Toolhelp32 + QueryFullProcessImageNameW) — one health check
+    doesn't justify a psutil dependency. Path-based because `aside` CLI
+    processes share the image name with the app and must not count as
+    "browser connected" (the bridge itself spawns the CLI constantly).
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+        return False
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            return False
+        while True:
+            # Image name alone can't tell app from CLI (tasklist even
+            # normalizes case), so resolve the full path for aside.exe.
+            if entry.szExeFile.lower() == "aside.exe":
+                proc = kernel32.OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION, False, entry.th32ProcessID)
+                if proc:
+                    try:
+                        buf = ctypes.create_unicode_buffer(32768)
+                        size = wintypes.DWORD(len(buf))
+                        if kernel32.QueryFullProcessImageNameW(
+                                proc, 0, buf, ctypes.byref(size)):
+                            path = buf.value.lower().replace("/", "\\")
+                            # App: ...\Aside\Application\Aside.exe
+                            # CLI: ...\Aside\CLI\current\aside.exe
+                            if path.endswith("\\application\\aside.exe"):
+                                return True
+                    finally:
+                        kernel32.CloseHandle(proc)
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                return False
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return False
+
+
 def _aside_app_running() -> bool:
     try:
+        if os.name == "nt":
+            return _windows_aside_app_running()
         out = subprocess.run(["pgrep", "-f", "/Applications/Aside.app/Contents/MacOS/Aside"],
                              capture_output=True, timeout=5)
         return out.returncode == 0
@@ -482,7 +561,10 @@ async def launch_aside():
     """Aside.app 이 꺼져 있으면 브라우저 툴이 전부 실패한다. 폰에서 깨울 수 있게."""
     if _aside_app_running():
         return {"ok": True, "already": True}
-    subprocess.Popen(["open", "-g", "-a", "Aside"])
+    if os.name == "nt":
+        subprocess.Popen([config.ASIDE_APP])
+    else:
+        subprocess.Popen(["open", "-g", "-a", "Aside"])
     for _ in range(20):
         await asyncio.sleep(0.5)
         if _aside_app_running():

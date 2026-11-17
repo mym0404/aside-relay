@@ -1,5 +1,6 @@
 import hashlib
 import io
+import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +11,11 @@ from fastapi.testclient import TestClient
 import config
 import server
 import uploads
+
+needs_symlinks = unittest.skipUnless(
+    support.SYMLINKS_SUPPORTED,
+    "symlink fixtures unavailable (Windows without Developer Mode/admin)",
+)
 
 
 class UploadsTest(support.IsolatedBackendTest):
@@ -68,6 +74,7 @@ class UploadsTest(support.IsolatedBackendTest):
             with self.assertRaises(ValueError):
                 uploads.save(raw, "source.js")
 
+    @needs_symlinks
     async def test_save_rejects_candidate_and_root_symlink_writes(self):
         raw = b"hello\n"
         fid = f"{hashlib.sha256(raw).hexdigest()[:16]}.txt"
