@@ -28,7 +28,10 @@ try {
   await cp(path.join(root, 'tests/unit'), path.join(temporary, 'tests/unit'), { recursive: true });
   await cp(path.join(root, 'web/sw.js'), path.join(temporary, 'web/sw.js'));
   await writeFile(path.join(temporary, 'package.json'), '{"type":"module"}');
-  await symlink(path.join(root, 'node_modules'), path.join(temporary, 'node_modules'), 'dir');
+  // Junctions need no privileges on Windows; symlinks there require
+  // Developer Mode or admin. Junction targets must be absolute (ours is).
+  await symlink(path.join(root, 'node_modules'), path.join(temporary, 'node_modules'),
+                process.platform === 'win32' ? 'junction' : 'dir');
   for (const mutation of mutations) {
     const filename = path.join(temporary, mutation.file);
     const original = await readFile(filename, 'utf8');
